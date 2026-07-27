@@ -34,7 +34,19 @@ IP allowlisting is an **outbound** problem: your requests to the vendor must
 *originate* from a fixed IP. That needs an egress gateway, which is what this
 is.
 
-## Quick start (AWS, via Terraform)
+## Quick start
+
+There are two ways to set up the gateway — **pick one**. Both end in the
+identical result (a locked-down WireGuard gateway with a static IP); everything
+after this section is the same regardless of which path you chose.
+
+- **Option A — AWS via Terraform**: you don't have a server yet and want AWS.
+  Terraform provisions the VM + Elastic IP and runs the install automatically.
+- **Option B — any Ubuntu/Debian VM**: you already have a VM (any provider:
+  Hetzner, DigitalOcean, Linode, a hand-made EC2 instance...) with a static
+  public IP. You run the install script yourself.
+
+### Option A: AWS, via Terraform
 
 Provisions a `t4g.nano` EC2 instance + Elastic IP (~$3–5/month total) and
 installs everything automatically.
@@ -51,7 +63,7 @@ The `next_steps` output walks you through creating your first peer config.
 Tear the whole thing down anytime with `terraform destroy` (the Elastic IP is
 released — tell your vendor before you do this).
 
-## Quick start (any Ubuntu/Debian VM)
+### Option B: any Ubuntu/Debian VM
 
 Works on AWS, Hetzner, DigitalOcean, Linode, anywhere. Get a VM with a static
 public IP, then:
