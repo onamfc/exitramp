@@ -48,35 +48,89 @@ after this section is the same regardless of which path you chose.
 
 ### Option A: AWS, via Terraform
 
-Provisions a `t4g.nano` EC2 instance + Elastic IP (~$3–5/month total) and
-installs everything automatically.
+Provisions a `t4g.nano` EC2 instance + Elastic IP (~$3–5/month total),
+installs the gateway automatically on first boot, and places the
+peer-management scripts on the server for you.
+
+**Prerequisites:**
+
+- An AWS account with credentials configured locally — run
+  [`aws configure`](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-quickstart.html)
+  once, or have a profile in `~/.aws/credentials`. The credentials need
+  permission to create EC2 instances, Elastic IPs, security groups, and key
+  pairs.
+- [Terraform](https://developer.hashicorp.com/terraform/install) 1.5 or newer.
+- An SSH keypair. If `ls ~/.ssh/*.pub` shows nothing, create one:
+  `ssh-keygen -t ed25519`.
+
+**1. Clone the repo and deploy:**
 
 ```bash
-cd terraform/aws
+git clone https://github.com/onamfc/exitramp.git
+cd exitramp/terraform/aws
+
 terraform init
 terraform apply \
+  -var "region=us-east-1" \
   -var "ssh_public_key=$(cat ~/.ssh/id_ed25519.pub)" \
   -var "admin_cidr=$(curl -4 -s https://checkip.amazonaws.com)/32"
 ```
 
-The `next_steps` output walks you through creating your first peer config.
-Tear the whole thing down anytime with `terraform destroy` (the Elastic IP is
-released — tell your vendor before you do this).
+What those variables mean:
+
+- `region` — any AWS region; pick one near you. If you use a non-default AWS
+  profile, prefix the command: `AWS_PROFILE=myprofile terraform apply ...`
+- `ssh_public_key` — your public key, so you (and only you) can SSH into the
+  gateway as the `ubuntu` user.
+- `admin_cidr` — the only IP allowed to SSH in. The command above uses your
+  current public IP. When your home IP changes, re-run the same
+  `terraform apply` with the new value to regain SSH access (the VPN itself
+  is unaffected — only SSH).
+
+**2. Note the IP it prints.** The `exitramp_ip` output (also shown in
+`next_steps`) is your permanent static egress IP — this is what you hand to
+your vendor for allowlisting.
+
+**3. Wait ~2 minutes** for the first-boot install to finish, then create your
+personal config (replace `yourname` — letters, digits, `-`, `_`):
+
+```bash
+ssh ubuntu@<exitramp_ip> 'sudo ./add-peer.sh yourname'
+scp ubuntu@<exitramp_ip>:yourname.conf .
+```
+
+If the `ssh` succeeds but `add-peer.sh` isn't found yet, first boot hasn't
+finished — wait a minute and retry.
+
+Now jump to **Connecting** below. Tear everything down anytime with
+`terraform destroy` (the Elastic IP is released — tell your vendor before you
+do this).
 
 ### Option B: any Ubuntu/Debian VM
 
-Works on AWS, Hetzner, DigitalOcean, Linode, anywhere. Get a VM with a static
-public IP, then:
+Works on AWS, Hetzner, DigitalOcean, Linode, anywhere.
+
+**Prerequisites:** a fresh Ubuntu 22.04+/Debian 12+ VM with a **static public
+IP** and SSH access to a user with `sudo`. In your cloud provider's firewall,
+allow **inbound UDP 51820** (WireGuard) and TCP 22 (SSH).
+
+On your laptop:
 
 ```bash
-scp install-server.sh add-peer.sh remove-peer.sh list-peers.sh user@your-vm:
-ssh user@your-vm
+git clone https://github.com/onamfc/exitramp.git
+cd exitramp
+scp install-server.sh add-peer.sh remove-peer.sh list-peers.sh ubuntu@YOUR_VM_IP:
+ssh ubuntu@YOUR_VM_IP
+# now on the VM:
 chmod +x *.sh
-sudo ./install-server.sh          # prints the static egress IP
-sudo ./add-peer.sh yourname       # prints a QR code + writes yourname.conf
+sudo ./install-server.sh          # prints the static egress IP for your vendor
+sudo ./add-peer.sh yourname       # creates your personal config + QR code
+exit
+# back on your laptop:
+scp ubuntu@YOUR_VM_IP:yourname.conf .
 ```
 
-Open **inbound UDP 51820** in your cloud provider's firewall.
+(Replace `ubuntu` with your VM's username if different.)
 
 ## Connecting (developer laptop)
 
@@ -96,10 +150,12 @@ it, and delete stray copies once imported.
 
 1. Install the [WireGuard app](https://www.wireguard.com/install/)
    (macOS/Windows/Linux/iOS/Android).
-2. Import `yourname.conf` (or scan the QR code on mobile).
+2. In the app: **Import Tunnel(s) from File** → pick `yourname.conf`
+   (on mobile, scan the QR code that `add-peer.sh` printed instead).
 3. Toggle the tunnel on.
-4. Verify: `./client/check-ip.sh <gateway-ip>` — it should print the
-   gateway's IP.
+4. Verify: `./client/check-ip.sh <gateway-ip>` from this repo — or just run
+   `curl -4 https://checkip.amazonaws.com` — and confirm it prints the
+   gateway's IP, not your home IP.
 
 Your daily workflow:
 
@@ -116,6 +172,9 @@ Testing on a **physical phone**? The phone hits your Mac's LAN address
 is what calls the vendor.
 
 ## Managing developers
+
+These commands run **on the gateway** (SSH in first, or prefix with
+`ssh ubuntu@<gateway-ip>`):
 
 ```bash
 sudo ./add-peer.sh alice                          # full tunnel
@@ -148,6 +207,38 @@ exitramp/
 ├── terraform/aws/           # EC2 + Elastic IP, fully automated
 └── docs/                    # selective routing, security model
 ```
+
+## Troubleshooting
+
+**`terraform apply` fails with `UnauthorizedOperation`.**
+Your AWS credentials can't create EC2 resources. Use a profile with EC2
+permissions: `AWS_PROFILE=admin terraform apply ...`
+
+**Tunnel is on but nothing loads / WireGuard shows no handshake.**
+The client can't reach the gateway on UDP 51820. Check your cloud provider's
+firewall/security group allows inbound UDP 51820 from anywhere (Option A sets
+this up automatically). Some hotel/corporate networks block unknown UDP —
+try another network.
+
+**Handshake works but no internet through the tunnel.**
+Forwarding or NAT isn't active on the gateway. SSH in and re-run
+`sudo ./install-server.sh` — it's idempotent and reapplies forwarding +
+firewall without touching your peers.
+
+**`ssh ubuntu@<gateway-ip>` times out.**
+SSH is restricted to the `admin_cidr` you set at deploy time, and your IP has
+probably changed. Re-run `terraform apply` with the new
+`admin_cidr=$(curl -4 -s https://checkip.amazonaws.com)/32`. (Option B: adjust
+your provider's firewall instead.) The VPN keeps working either way.
+
+**`add-peer.sh: command not found` right after deploying.**
+First-boot setup hasn't finished (takes ~2 minutes). Wait and retry. To watch
+it: `ssh ubuntu@<gateway-ip> 'sudo tail -f /var/log/cloud-init-output.log'`
+
+**How do I check it's working end to end?**
+With the tunnel on: `curl -4 https://checkip.amazonaws.com` must print the
+gateway's IP. On the gateway, `sudo ./list-peers.sh` should show your peer's
+last handshake seconds ago.
 
 ## FAQ
 

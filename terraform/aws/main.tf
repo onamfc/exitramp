@@ -84,18 +84,30 @@ resource "aws_instance" "gateway" {
   key_name               = aws_key_pair.gateway.key_name
   vpc_security_group_ids = [aws_security_group.gateway.id]
 
-  # Run the stock install script on first boot. WG_PORT is threaded through so
-  # the firewall, WireGuard, and the security group all agree on the port.
+  # Run the stock install script on first boot, then drop the peer-management
+  # scripts into the admin user's home so no manual scp step is needed.
+  # WG_PORT is threaded through so the firewall, WireGuard, and the security
+  # group all agree on the port.
   user_data = <<-EOT
     #!/usr/bin/env bash
     set -euo pipefail
     export WG_PORT=${var.wireguard_port}
     ${file("${path.module}/../../install-server.sh")}
+    echo '${base64gzip(file("${path.module}/../../add-peer.sh"))}' | base64 -d | gunzip > /home/ubuntu/add-peer.sh
+    echo '${base64gzip(file("${path.module}/../../remove-peer.sh"))}' | base64 -d | gunzip > /home/ubuntu/remove-peer.sh
+    echo '${base64gzip(file("${path.module}/../../list-peers.sh"))}' | base64 -d | gunzip > /home/ubuntu/list-peers.sh
+    chmod 0755 /home/ubuntu/add-peer.sh /home/ubuntu/remove-peer.sh /home/ubuntu/list-peers.sh
+    chown ubuntu:ubuntu /home/ubuntu/add-peer.sh /home/ubuntu/remove-peer.sh /home/ubuntu/list-peers.sh
   EOT
 
-  # The egress IP must survive instance replacement, so it lives on the EIP —
-  # but user_data changes would otherwise force replacement on every tweak.
+  # user_data only matters on first boot (cloud-init runs it once per
+  # instance). Ignore later drift so script updates in the repo never stop or
+  # replace a live gateway; the egress IP itself lives on the EIP regardless.
   user_data_replace_on_change = false
+
+  lifecycle {
+    ignore_changes = [user_data]
+  }
 
   root_block_device {
     volume_size = 8
