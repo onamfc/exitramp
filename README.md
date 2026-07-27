@@ -187,6 +187,28 @@ Full tunnel routes *everything* through the gateway while connected (simplest,
 recommended — just disconnect when not testing). Split tunnel routes only
 chosen vendor CIDRs: see [docs/selective-routing.md](docs/selective-routing.md).
 
+### Onboarding a teammate (anywhere in the world)
+
+Teammates never need access to the gateway — only the admin does. To add one:
+
+1. Create their peer and fetch the config:
+   `ssh ubuntu@<gateway-ip> 'sudo ./add-peer.sh alice'` then
+   `scp ubuntu@<gateway-ip>:alice.conf .`
+2. Send them `alice.conf` over a **secure channel** (password-manager share,
+   Signal, expiring secret link — not plain email/chat: the file is a
+   credential). One config per person, so departures are a one-line
+   `remove-peer.sh` revocation.
+3. They install the [WireGuard app](https://www.wireguard.com/install/),
+   import the file, delete it, and toggle the tunnel on while testing. Done —
+   their vendor traffic now leaves from the same allowlisted IP as yours.
+
+Geography doesn't change the setup, but it does change latency: a full tunnel
+sends *all* their traffic through your gateway's region while connected. For
+far-away teammates, either keep the toggle-on-only-while-testing habit or
+create their peer with `--split` so only vendor traffic makes the round trip.
+Peers are isolated from each other by the firewall — one connected laptop
+cannot reach another.
+
 ## Security
 
 The install locks the box down by default: WireGuard-key auth per developer,
