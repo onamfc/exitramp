@@ -43,10 +43,10 @@ esac
 SUBNET_BASE="${WG_SUBNET%.0/24}"        # e.g. 10.88.0
 SERVER_VPN_IP="${SUBNET_BASE}.1"
 
-log "installing packages (wireguard, nftables, qrencode, curl)..."
+log "installing packages (wireguard, nftables, qrencode, curl, iproute2)..."
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq wireguard nftables qrencode curl >/dev/null
+apt-get install -y -qq wireguard nftables qrencode curl iproute2 >/dev/null
 
 # --- IP forwarding ---------------------------------------------------------
 log "enabling IPv4 forwarding..."
