@@ -1,0 +1,11 @@
+# WireGuard client configs contain private keys — never commit them
+*.conf
+clients/
+
+# Terraform (.terraform.lock.hcl IS committed, for reproducible provider versions)
+.terraform/
+*.tfstate
+*.tfstate.*
+terraform.tfvars
+*.auto.tfvars
+crash.log

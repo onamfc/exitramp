@@ -1,0 +1,157 @@
+# exitramp
+
+**A static exit IP for your local dev traffic.**
+
+A self-hosted static egress gateway for local development against
+IP-allowlisted APIs.
+
+Your vendor says *"give us an IP to whitelist"* — but your home IP is dynamic,
+and you want to test **uncommitted local code** without deploying to staging
+first. exitramp puts a tiny WireGuard gateway on a $3/month cloud VM with
+a static IP. Flip the VPN on, and your local backend's requests to the vendor
+leave from that IP. Flip it off when you're done.
+
+```
+iOS Simulator / local app
+        ↓
+localhost:3000  (your local backend — breakpoints, hot reload, uncommitted code)
+        ↓
+WireGuard tunnel
+        ↓
+Cloud VM + static IP   ←── the IP your vendor allowlists
+        ↓
+Vendor API
+```
+
+No code changes. No proxy agents. Works with Node, Python, Go, PHP, Postman,
+curl — anything, because it's the operating system routing the traffic, not an
+HTTP proxy.
+
+## Why not ngrok / Cloudflare Tunnel?
+
+Those solve **inbound** traffic (exposing your local server to the internet).
+IP allowlisting is an **outbound** problem: your requests to the vendor must
+*originate* from a fixed IP. That needs an egress gateway, which is what this
+is.
+
+## Quick start (AWS, via Terraform)
+
+Provisions a `t4g.nano` EC2 instance + Elastic IP (~$3–5/month total) and
+installs everything automatically.
+
+```bash
+cd terraform/aws
+terraform init
+terraform apply \
+  -var "ssh_public_key=$(cat ~/.ssh/id_ed25519.pub)" \
+  -var "admin_cidr=$(curl -4 -s https://checkip.amazonaws.com)/32"
+```
+
+The `next_steps` output walks you through creating your first peer config.
+Tear the whole thing down anytime with `terraform destroy` (the Elastic IP is
+released — tell your vendor before you do this).
+
+## Quick start (any Ubuntu/Debian VM)
+
+Works on AWS, Hetzner, DigitalOcean, Linode, anywhere. Get a VM with a static
+public IP, then:
+
+```bash
+scp install-server.sh add-peer.sh remove-peer.sh list-peers.sh user@your-vm:
+ssh user@your-vm
+chmod +x *.sh
+sudo ./install-server.sh          # prints the static egress IP
+sudo ./add-peer.sh yourname       # prints a QR code + writes yourname.conf
+```
+
+Open **inbound UDP 51820** in your cloud provider's firewall.
+
+## Connecting (developer laptop)
+
+1. Install the [WireGuard app](https://www.wireguard.com/install/)
+   (macOS/Windows/Linux/iOS/Android).
+2. Import `yourname.conf` (or scan the QR code on mobile).
+3. Toggle the tunnel on.
+4. Verify: `./client/check-ip.sh <gateway-ip>` — it should print the
+   gateway's IP.
+
+Your daily workflow:
+
+```
+1. Start your local backend
+2. Toggle WireGuard on
+3. Run your app against localhost
+4. Test the vendor integration — vendor sees the static IP
+5. Toggle WireGuard off
+```
+
+Testing on a **physical phone**? The phone hits your Mac's LAN address
+(`http://192.168.1.x:3000`); only your Mac needs the tunnel, because the Mac
+is what calls the vendor.
+
+## Managing developers
+
+```bash
+sudo ./add-peer.sh alice                          # full tunnel
+sudo ./add-peer.sh bob --split 203.0.113.0/24     # only vendor traffic tunnels
+sudo ./list-peers.sh                              # who exists, last handshake
+sudo ./remove-peer.sh alice                       # revoke — immediate
+```
+
+Full tunnel routes *everything* through the gateway while connected (simplest,
+recommended — just disconnect when not testing). Split tunnel routes only
+chosen vendor CIDRs: see [docs/selective-routing.md](docs/selective-routing.md).
+
+## Security
+
+The install locks the box down by default: WireGuard-key auth per developer,
+nftables denies everything inbound except SSH + WireGuard, forwarding is
+strictly `vpn → internet` (peers can't reach each other, the internet can't
+relay through you). Details and operational practices:
+[docs/security.md](docs/security.md).
+
+## Project layout
+
+```
+exitramp/
+├── install-server.sh        # one-shot server setup (also used as cloud-init)
+├── add-peer.sh              # onboard a developer (full or split tunnel)
+├── remove-peer.sh           # revoke a developer
+├── list-peers.sh            # list peers + live handshake status
+├── client/check-ip.sh       # laptop-side "am I actually egressing?" check
+├── terraform/aws/           # EC2 + Elastic IP, fully automated
+└── docs/                    # selective routing, security model
+```
+
+## FAQ
+
+**Why WireGuard and not an HTTP proxy (Squid/Tinyproxy)?**
+A proxy needs per-app configuration (proxy agents in Node, env vars that some
+clients ignore) and is one firewall mistake away from being an open relay. A
+VPN works with every client unchanged and has no anonymous-access failure
+mode.
+
+**Why not a VPN provider with a dedicated IP?**
+Shared infrastructure, less control, and many vendors refuse to allowlist
+known VPN ranges. This is your IP on your VM.
+
+**Can I use this in production?**
+It's built for development. For production, put your backend somewhere with a
+static egress IP natively (EC2 + EIP, or NAT Gateway) — the production flow
+should be `app → your API → vendor`, with vendor credentials server-side.
+
+**What does it cost?**
+The software is free (MIT). A `t4g.nano` + EIP is roughly $3–5/month on AWS;
+Hetzner/DigitalOcean equivalents are similar.
+
+## Roadmap
+
+- [ ] Terraform modules for Hetzner, DigitalOcean, Linode
+- [ ] `make` targets / single wrapper CLI
+- [ ] DNS-based vendor rules for split tunnel (auto-refresh resolved IPs)
+- [ ] Temporary (time-boxed) peer access
+- [ ] Headscale option for larger teams
+
+## License
+
+MIT — see [LICENSE](LICENSE).
